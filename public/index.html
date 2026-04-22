@@ -94,24 +94,35 @@
           ⏸ En pause
         </span>
       );
+      if (task.status === 'carried_over') return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-semibold rounded-full bg-indigo-100 text-indigo-600">
+          → Reportée
+        </span>
+      );
       return null;
     }
 
     // ─── Carte de tâche ───────────────────────────────────────────────────────
-    function TaskCard({ task, now, onEdit, onDelete, onStart, onPause, onResume, onStop, onToggle }) {
-      const isTemplate = task.status === 'template';
-      const isActive   = task.status === 'active';
-      const isPaused   = task.status === 'paused';
-      const isDone     = task.status === 'done';
+    function TaskCard({ task, allTasks, now, onEdit, onDelete, onStart, onPause, onResume, onStop, onToggle }) {
+      const isTemplate    = task.status === 'template';
+      const isActive      = task.status === 'active';
+      const isPaused      = task.status === 'paused';
+      const isDone        = task.status === 'done';
+      const isCarriedOver = task.status === 'carried_over';
 
       const elapsed  = isActive ? calcActiveElapsed(task.resumeTime, task.workedMinutes) : null;
       const duration = isDone && task.startTime && task.endTime ? calcDuration(task.startTime, task.endTime) : null;
 
-      const borderClass = isActive ? 'border-amber-300 bg-amber-50'
-        : isPaused            ? 'border-blue-300 bg-blue-50'
-        : task.completed      ? 'border-emerald-200 bg-emerald-50'
-        : isTemplate          ? 'border-slate-200 bg-slate-50'
-        :                       'border-slate-200 bg-white hover:border-blue-300';
+      // Tâche parente (pour les continuations)
+      const parentTask = task.parentTaskId ? allTasks.find(t => t.id === task.parentTaskId) : null;
+
+      const borderClass = isActive      ? 'border-amber-300 bg-amber-50'
+        : isPaused                      ? 'border-blue-300 bg-blue-50'
+        : isCarriedOver                 ? 'border-indigo-200 bg-indigo-50'
+        : task.completed                ? 'border-emerald-200 bg-emerald-50'
+        : isTemplate && task.parentTaskId ? 'border-indigo-300 bg-indigo-50'
+        : isTemplate                    ? 'border-slate-200 bg-slate-50'
+        :                                 'border-slate-200 bg-white hover:border-blue-300';
 
       return (
         <div className={`flex items-start gap-3 p-3 rounded-lg border-2 transition-all ${borderClass}`}>
@@ -120,7 +131,8 @@
             {isDone && (
               <button onClick={onToggle} className={task.completed ? 'text-emerald-500 text-lg' : 'text-slate-300 text-lg hover:text-slate-500'}>✓</button>
             )}
-            {isActive  && <span className="text-amber-500 text-lg">▶</span>}
+            {isActive      && <span className="text-amber-500 text-lg">▶</span>}
+            {isCarriedOver && <span className="text-indigo-400 text-lg">→</span>}
             {isPaused  && <span className="text-blue-400 text-lg">⏸</span>}
             {isTemplate && <span className="text-slate-400 text-lg">◷</span>}
           </div>
@@ -132,6 +144,22 @@
               <span className="inline-block px-2 py-0.5 text-xs font-semibold rounded bg-blue-100 text-blue-700">
                 {task.project}
               </span>
+              {/* Badge "Suite du [date]" pour les tâches continuées */}
+              {parentTask && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-indigo-100 text-indigo-700">
+                  📎 Suite du {fmtDate(parentTask.date)}
+                  {parentTask.workedMinutes > 0 && ` · ${fmtMinutes(parentTask.workedMinutes)} cumulés`}
+                </span>
+              )}
+              {/* Badge "Continué le [date]" pour les tâches reportées */}
+              {isCarriedOver && (() => {
+                const child = allTasks.find(t => t.parentTaskId === task.id);
+                return child ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-indigo-100 text-indigo-700">
+                    ↪ Continué le {fmtDate(child.date)}
+                  </span>
+                ) : null;
+              })()}
               {/* Temps affiché */}
               {isActive && task.startTime && (
                 <span className="text-xs text-amber-700 font-medium">
@@ -141,6 +169,11 @@
               {isPaused && (
                 <span className="text-xs text-blue-600 font-medium">
                   Travaillé {fmtMinutes(task.workedMinutes)} · en pause
+                </span>
+              )}
+              {isCarriedOver && task.workedMinutes > 0 && (
+                <span className="text-xs text-indigo-600 font-medium">
+                  Travaillé {fmtMinutes(task.workedMinutes)} avant report
                 </span>
               )}
               {isDone && task.startTime && task.endTime && (
@@ -236,7 +269,8 @@
       const [isGenDailyPro, setIsGenDailyPro] = useState(false);
       const [showDailyExport, setShowDailyExport] = useState(false);
       const [exportDay, setExportDay]         = useState(new Date().toISOString().split('T')[0]);
-      const [now, setNow]             = useState(new Date());
+      const [now, setNow]                   = useState(new Date());
+      const [rolloverNotice, setRolloverNotice] = useState(0);
 
       // Mise à jour du temps chaque minute (pour l'élapsed des tâches actives)
       useEffect(() => {
@@ -244,7 +278,24 @@
         return () => clearInterval(t);
       }, []);
 
-      useEffect(() => { loadData(); }, []);
+      useEffect(() => {
+        const today    = new Date().toISOString().split('T')[0];
+        const lastDate = localStorage.getItem('suivi_lastDate');
+        // Si nouveau jour → rollover avant de charger
+        if (lastDate && lastDate !== today) {
+          fetch(`${API}/tasks/rollover`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ date: today }),
+          })
+            .then(r => r.json())
+            .then(data => { if (data.rolledOver > 0) setRolloverNotice(data.rolledOver); })
+            .catch(() => {})
+            .finally(() => { loadData(); });
+        } else {
+          loadData();
+        }
+        localStorage.setItem('suivi_lastDate', today);
+      }, []);
 
       const loadData = async () => {
         try {
@@ -422,6 +473,16 @@
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4 md:p-6">
           <div className="max-w-4xl mx-auto space-y-4">
 
+            {/* ── Bannière rollover ── */}
+            {rolloverNotice > 0 && (
+              <div className="flex items-center justify-between gap-3 px-4 py-3 bg-indigo-100 border border-indigo-300 rounded-xl text-indigo-800">
+                <span className="text-sm font-medium">
+                  📋 {rolloverNotice} tâche{rolloverNotice > 1 ? 's' : ''} en cours hier {rolloverNotice > 1 ? 'ont été reportées' : 'a été reportée'} — retrouvez-{rolloverNotice > 1 ? 'les' : 'la'} ci-dessous avec le badge <strong>En attente</strong>.
+                </span>
+                <button onClick={() => setRolloverNotice(0)} className="text-indigo-500 hover:text-indigo-700 font-bold text-lg leading-none">✕</button>
+              </div>
+            )}
+
             {/* ── En-tête ── */}
             <div className="bg-white rounded-xl shadow-md p-5">
               <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
@@ -572,7 +633,7 @@
                 </div>
                 <div className="p-4 space-y-2">
                   {liveTasks.map(task => (
-                    <TaskCard key={task.id} task={task} now={now}
+                    <TaskCard key={task.id} task={task} allTasks={tasks} now={now}
                       onEdit={() => startEdit(task)}
                       onDelete={() => deleteTask(task.id)}
                       onStart={() => startTask(task.id)}
@@ -603,7 +664,7 @@
                   </div>
                   <div className="p-4 space-y-2">
                     {dateTasks.map(task => (
-                      <TaskCard key={task.id} task={task} now={now}
+                      <TaskCard key={task.id} task={task} allTasks={tasks} now={now}
                         onEdit={() => startEdit(task)}
                         onDelete={() => deleteTask(task.id)}
                         onStart={() => startTask(task.id)}

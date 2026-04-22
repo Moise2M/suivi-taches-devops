@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, HttpException, HttpStatus } from '@nestjs/common';
 import { TasksService } from '../services/tasks.service';
-import { CreateTaskDto, UpdateTaskDto, ExportWeeklyDto, ExportProfessionalDto, ExportDailyDto } from '../dto/task.dto';
+import { CreateTaskDto, UpdateTaskDto, ExportWeeklyDto, ExportProfessionalDto, ExportDailyDto, RolloverDto } from '../dto/task.dto';
 
 @Controller('api/tasks')
 export class TasksController {
@@ -33,6 +33,11 @@ export class TasksController {
     } catch (error) {
       throw new HttpException(error.message, HttpStatus.INTERNAL_SERVER_ERROR);
     }
+  }
+
+  @Post('rollover')
+  rolloverTasks(@Body() dto: RolloverDto) {
+    return this.tasksService.rolloverTasks(dto.date);
   }
 
   @Post('export/weekly')

@@ -56,6 +56,9 @@ export class DatabaseService implements OnModuleInit {
     if (!cols.includes('pauseHistory')) {
       this.db.exec(`ALTER TABLE tasks ADD COLUMN pauseHistory TEXT NOT NULL DEFAULT '[]'`);
     }
+    if (!cols.includes('parentTaskId')) {
+      this.db.exec(`ALTER TABLE tasks ADD COLUMN parentTaskId INTEGER`);
+    }
   }
 
   getDb() {

@@ -21,9 +21,9 @@ export class CreateTaskDto {
   @IsOptional()
   endTime?: string;
 
-  @IsIn(['template', 'active', 'paused', 'done'])
+  @IsIn(['template', 'active', 'paused', 'done', 'carried_over'])
   @IsOptional()
-  status?: 'template' | 'active' | 'paused' | 'done';
+  status?: 'template' | 'active' | 'paused' | 'done' | 'carried_over';
 }
 
 export class UpdateTaskDto {
@@ -51,9 +51,9 @@ export class UpdateTaskDto {
   @IsOptional()
   completed?: boolean;
 
-  @IsIn(['template', 'active', 'paused', 'done'])
+  @IsIn(['template', 'active', 'paused', 'done', 'carried_over'])
   @IsOptional()
-  status?: 'template' | 'active' | 'paused' | 'done';
+  status?: 'template' | 'active' | 'paused' | 'done' | 'carried_over';
 }
 
 export class ExportWeeklyDto {
@@ -69,6 +69,12 @@ export class ExportProfessionalDto {
 }
 
 export class ExportDailyDto {
+  @IsString()
+  @IsNotEmpty()
+  date: string;
+}
+
+export class RolloverDto {
   @IsString()
   @IsNotEmpty()
   date: string;

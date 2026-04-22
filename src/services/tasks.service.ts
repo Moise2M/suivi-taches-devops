@@ -17,10 +17,11 @@ export interface Task {
   startTime?: string;
   endTime?: string;
   completed: boolean;
-  status: 'template' | 'active' | 'paused' | 'done';
+  status: 'template' | 'active' | 'paused' | 'done' | 'carried_over';
   resumeTime?: string;
   workedMinutes: number;
   pauseHistory: PauseEntry[];
+  parentTaskId?: number;
 }
 
 @Injectable()
@@ -213,6 +214,37 @@ export class TasksService {
     return this.rowToTask(this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(id));
   }
 
+  // ── Report sur les jours ──────────────────────────────────────────────────────
+
+  /**
+   * Reporte les tâches actives/en pause des jours précédents vers aujourd'hui.
+   * - L'ancienne entrée passe en status 'carried_over'
+   * - Une nouvelle tâche template est créée pour aujourd'hui avec parentTaskId
+   */
+  rolloverTasks(today: string): { rolledOver: number; tasks: Task[] } {
+    const stale = this.db
+      .prepare("SELECT * FROM tasks WHERE status IN ('active', 'paused') AND date < ?")
+      .all(today) as any[];
+
+    const newTasks: Task[] = [];
+
+    for (const task of stale) {
+      // Fermer l'ancienne entrée
+      this.db.prepare("UPDATE tasks SET status='carried_over' WHERE id=?").run(task.id);
+
+      // Créer la continuation pour aujourd'hui
+      const result = this.db
+        .prepare(
+          'INSERT INTO tasks (date, project, description, status, completed, workedMinutes, pauseHistory, parentTaskId) VALUES (?, ?, ?, ?, 0, ?, ?, ?)',
+        )
+        .run(today, task.project, task.description, 'template', task.workedMinutes ?? 0, '[]', task.id);
+
+      newTasks.push(this.rowToTask(this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(result.lastInsertRowid)));
+    }
+
+    return { rolledOver: stale.length, tasks: newTasks };
+  }
+
   // ── Projets ─────────────────────────────────────────────────────────────────
 
   getAllProjects(): string[] {
@@ -251,9 +283,10 @@ export class TasksService {
 
   /** Construit le corps texte du rapport à partir d'une liste de tâches (tous statuts). */
   private buildReportText(tasks: Task[]): string {
-    const doneTasks     = tasks.filter(t => t.status === 'done');
-    const activeTasks   = tasks.filter(t => t.status === 'active' || t.status === 'paused');
-    const templateTasks = tasks.filter(t => t.status === 'template');
+    const doneTasks        = tasks.filter(t => t.status === 'done');
+    const activeTasks      = tasks.filter(t => t.status === 'active' || t.status === 'paused');
+    const templateTasks    = tasks.filter(t => t.status === 'template');
+    const carriedOverTasks = tasks.filter(t => t.status === 'carried_over');
 
     let summary = '';
     let totalMinutes = 0;
@@ -329,7 +362,21 @@ export class TasksService {
       summary += `PLANIFIÉES (NON DÉMARRÉES)\n`;
       summary += `${'-'.repeat(40)}\n`;
       templateTasks.forEach(task => {
-        summary += `◷ [${task.project}] ${task.description}\n`;
+        const suite = task.parentTaskId ? ` [suite J-1]` : '';
+        summary += `◷ [${task.project}] ${task.description}${suite}\n`;
+        if (task.workedMinutes > 0) summary += `     Temps cumulé (J-1) : ${this.formatMinutes(task.workedMinutes)}\n`;
+      });
+      summary += `\n`;
+    }
+
+    // ── Tâches reportées (en cours hier, continuées aujourd'hui) ──────────────
+    if (carriedOverTasks.length > 0) {
+      summary += `EN COURS HIER (REPORTÉES AU LENDEMAIN)\n`;
+      summary += `${'-'.repeat(40)}\n`;
+      carriedOverTasks.forEach(task => {
+        let timeStr = task.startTime ? ` — démarré à ${task.startTime}` : '';
+        if (task.workedMinutes > 0) timeStr += `, travaillé ${this.formatMinutes(task.workedMinutes)}`;
+        summary += `→ [${task.project}] ${task.description}${timeStr}\n`;
       });
       summary += `\n`;
     }
@@ -338,10 +385,11 @@ export class TasksService {
     summary += `${'='.repeat(60)}\n`;
     summary += `STATISTIQUES\n`;
     summary += `${'-'.repeat(40)}\n`;
-    summary += `Terminées    : ${doneTasks.length}\n`;
-    if (activeTasks.length > 0)   summary += `En cours/pause : ${activeTasks.length}\n`;
-    if (templateTasks.length > 0) summary += `Planifiées     : ${templateTasks.length}\n`;
-    summary += `Total        : ${tasks.length}\n`;
+    summary += `Terminées      : ${doneTasks.length}\n`;
+    if (activeTasks.length > 0)      summary += `En cours/pause : ${activeTasks.length}\n`;
+    if (carriedOverTasks.length > 0) summary += `Reportées      : ${carriedOverTasks.length}\n`;
+    if (templateTasks.length > 0)    summary += `Planifiées     : ${templateTasks.length}\n`;
+    summary += `Total          : ${tasks.length}\n`;
     if (totalMinutes > 0) summary += `Temps travaillé : ${this.formatMinutes(totalMinutes)}\n`;
 
     const projectStats = doneTasks.reduce((acc, t) => {
