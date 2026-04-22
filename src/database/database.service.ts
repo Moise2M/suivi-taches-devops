@@ -53,6 +53,9 @@ export class DatabaseService implements OnModuleInit {
     if (!cols.includes('workedMinutes')) {
       this.db.exec(`ALTER TABLE tasks ADD COLUMN workedMinutes INTEGER NOT NULL DEFAULT 0`);
     }
+    if (!cols.includes('pauseHistory')) {
+      this.db.exec(`ALTER TABLE tasks ADD COLUMN pauseHistory TEXT NOT NULL DEFAULT '[]'`);
+    }
   }
 
   getDb() {

@@ -4,6 +4,11 @@ import axios from 'axios';
 import { CreateTaskDto, UpdateTaskDto } from '../dto/task.dto';
 import { DatabaseService } from '../database/database.service';
 
+export interface PauseEntry {
+  pausedAt: string;    // HH:MM
+  resumedAt?: string;  // HH:MM — absent si encore en pause
+}
+
 export interface Task {
   id: number;
   date: string;
@@ -15,6 +20,7 @@ export interface Task {
   status: 'template' | 'active' | 'paused' | 'done';
   resumeTime?: string;
   workedMinutes: number;
+  pauseHistory: PauseEntry[];
 }
 
 @Injectable()
@@ -33,6 +39,7 @@ export class TasksService {
       ...row,
       completed: row.completed === 1,
       status: row.status ?? 'done',
+      pauseHistory: JSON.parse(row.pauseHistory || '[]'),
     };
   }
 
@@ -50,10 +57,6 @@ export class TasksService {
     return h * 60 + m;
   }
 
-  private minutesToTime(totalMinutes: number): string {
-    const clamped = ((totalMinutes % 1440) + 1440) % 1440;
-    return `${Math.floor(clamped / 60).toString().padStart(2, '0')}:${(clamped % 60).toString().padStart(2, '0')}`;
-  }
 
   // ── Tâches ──────────────────────────────────────────────────────────────────
 
@@ -143,64 +146,69 @@ export class TasksService {
     const now = this.nowTime();
     const today = this.todayDate();
     this.db
-      .prepare('UPDATE tasks SET startTime=?, resumeTime=?, workedMinutes=0, date=?, status=?, completed=0 WHERE id=?')
-      .run(now, now, today, 'active', id);
+      .prepare('UPDATE tasks SET startTime=?, resumeTime=?, workedMinutes=0, pauseHistory=?, date=?, status=?, completed=0 WHERE id=?')
+      .run(now, now, '[]', today, 'active', id);
 
     return this.rowToTask(this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(id));
   }
 
-  /** Met en pause une tâche en cours : sauvegarde le temps travaillé depuis le dernier resume */
+  /** Met en pause une tâche en cours : enregistre l'heure de pause dans l'historique */
   pauseTask(id: number): Task {
     const task = this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as any;
     if (!task) throw new NotFoundException('Tâche non trouvée');
     if (task.status !== 'active') throw new Error('La tâche n\'est pas en cours');
 
-    // Calculer le temps travaillé depuis le dernier resume
+    const now = this.nowTime();
     const sessionMinutes = task.resumeTime
-      ? Math.max(0, this.timeToMinutes(this.nowTime()) - this.timeToMinutes(task.resumeTime))
+      ? Math.max(0, this.timeToMinutes(now) - this.timeToMinutes(task.resumeTime))
       : 0;
     const totalWorked = (task.workedMinutes ?? 0) + sessionMinutes;
 
+    const history: PauseEntry[] = JSON.parse(task.pauseHistory || '[]');
+    history.push({ pausedAt: now });
+
     this.db
-      .prepare('UPDATE tasks SET workedMinutes=?, status=? WHERE id=?')
-      .run(totalWorked, 'paused', id);
+      .prepare('UPDATE tasks SET workedMinutes=?, pauseHistory=?, status=? WHERE id=?')
+      .run(totalWorked, JSON.stringify(history), 'paused', id);
 
     return this.rowToTask(this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(id));
   }
 
-  /** Reprend une tâche en pause : remet le chrono en route */
+  /** Reprend une tâche en pause : enregistre l'heure de reprise dans l'historique */
   resumeTask(id: number): Task {
     const task = this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as any;
     if (!task) throw new NotFoundException('Tâche non trouvée');
     if (task.status !== 'paused') throw new Error('La tâche n\'est pas en pause');
 
     const now = this.nowTime();
+    const history: PauseEntry[] = JSON.parse(task.pauseHistory || '[]');
+    const last = history[history.length - 1];
+    if (last && !last.resumedAt) last.resumedAt = now;
+
     this.db
-      .prepare('UPDATE tasks SET resumeTime=?, status=? WHERE id=?')
-      .run(now, 'active', id);
+      .prepare('UPDATE tasks SET resumeTime=?, pauseHistory=?, status=? WHERE id=?')
+      .run(now, JSON.stringify(history), 'active', id);
 
     return this.rowToTask(this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(id));
   }
 
-  /** Termine une tâche en cours : calcule le temps total et construit l'endTime */
+  /** Termine une tâche : endTime = heure réelle du clic, workedMinutes = temps net hors pauses */
   stopTask(id: number): Task {
     const task = this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as any;
     if (!task) throw new NotFoundException('Tâche non trouvée');
 
-    // Temps de la session courante (depuis le dernier resume)
+    const now = this.nowTime();
+
+    // Temps net travaillé depuis le dernier resume (pour les stats, hors pauses)
     const sessionMinutes = task.resumeTime
-      ? Math.max(0, this.timeToMinutes(this.nowTime()) - this.timeToMinutes(task.resumeTime))
+      ? Math.max(0, this.timeToMinutes(now) - this.timeToMinutes(task.resumeTime))
       : 0;
     const totalWorked = (task.workedMinutes ?? 0) + sessionMinutes;
 
-    // L'endTime = startTime + totalWorked (temps net travaillé, pauses exclues)
-    const endTime = task.startTime
-      ? this.minutesToTime(this.timeToMinutes(task.startTime) + totalWorked)
-      : this.nowTime();
-
+    // endTime = heure réelle de terminaison (jamais calculée, toujours le now)
     this.db
       .prepare('UPDATE tasks SET endTime=?, workedMinutes=?, status=?, completed=1 WHERE id=?')
-      .run(endTime, totalWorked, 'done', id);
+      .run(now, totalWorked, 'done', id);
 
     return this.rowToTask(this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(id));
   }
@@ -273,6 +281,15 @@ export class TasksService {
             timeStr = ` [${task.startTime}]`;
           }
           summary += `✓ [${task.project}] ${task.description}${timeStr}\n`;
+          if (task.pauseHistory?.length > 0) {
+            task.pauseHistory.forEach((p: PauseEntry) => {
+              const pauseMin = p.resumedAt
+                ? Math.max(0, this.timeToMinutes(p.resumedAt) - this.timeToMinutes(p.pausedAt))
+                : 0;
+              const durStr = pauseMin > 0 ? ` (${this.formatMinutes(pauseMin)} en pause)` : '';
+              summary += `     ⏸ Pause ${p.pausedAt} → ▶ Reprise ${p.resumedAt ?? '(en cours)'}${durStr}\n`;
+            });
+          }
         });
 
         if (dayMinutes > 0) {
@@ -294,6 +311,15 @@ export class TasksService {
         let timeStr = task.startTime ? ` — démarré à ${task.startTime}` : '';
         if (task.workedMinutes > 0) timeStr += `, travaillé ${this.formatMinutes(task.workedMinutes)}`;
         summary += `${label}  [${task.project}] ${task.description}${timeStr}\n`;
+        if (task.pauseHistory?.length > 0) {
+          task.pauseHistory.forEach((p: PauseEntry) => {
+            const pauseMin = p.resumedAt
+              ? Math.max(0, this.timeToMinutes(p.resumedAt) - this.timeToMinutes(p.pausedAt))
+              : 0;
+            const durStr = pauseMin > 0 ? ` (${this.formatMinutes(pauseMin)})` : '';
+            summary += `     ⏸ ${p.pausedAt} → ▶ ${p.resumedAt ?? '(en cours)'}${durStr}\n`;
+          });
+        }
       });
       summary += `\n`;
     }
