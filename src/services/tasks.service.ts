@@ -29,7 +29,7 @@ export class TasksService {
   constructor(
     private configService: ConfigService,
     private databaseService: DatabaseService,
-  ) {}
+  ) { }
 
   private get db() {
     return this.databaseService.getDb();
@@ -283,9 +283,9 @@ export class TasksService {
 
   /** Construit le corps texte du rapport à partir d'une liste de tâches (tous statuts). */
   private buildReportText(tasks: Task[]): string {
-    const doneTasks        = tasks.filter(t => t.status === 'done');
-    const activeTasks      = tasks.filter(t => t.status === 'active' || t.status === 'paused');
-    const templateTasks    = tasks.filter(t => t.status === 'template');
+    const doneTasks = tasks.filter(t => t.status === 'done');
+    const activeTasks = tasks.filter(t => t.status === 'active' || t.status === 'paused');
+    const templateTasks = tasks.filter(t => t.status === 'template');
     const carriedOverTasks = tasks.filter(t => t.status === 'carried_over');
 
     let summary = '';
@@ -373,11 +373,17 @@ export class TasksService {
     if (carriedOverTasks.length > 0) {
       summary += `EN COURS HIER (REPORTÉES AU LENDEMAIN)\n`;
       summary += `${'-'.repeat(40)}\n`;
+      let carriedMinutes = 0;
       carriedOverTasks.forEach(task => {
         let timeStr = task.startTime ? ` — démarré à ${task.startTime}` : '';
         if (task.workedMinutes > 0) timeStr += `, travaillé ${this.formatMinutes(task.workedMinutes)}`;
         summary += `→ [${task.project}] ${task.description}${timeStr}\n`;
+        carriedMinutes += task.workedMinutes ?? 0;
       });
+      if (carriedMinutes > 0) {
+        summary += `  → Temps travaillé (reporté) : ${this.formatMinutes(carriedMinutes)}\n`;
+        totalMinutes += carriedMinutes;
+      }
       summary += `\n`;
     }
 
@@ -386,9 +392,9 @@ export class TasksService {
     summary += `STATISTIQUES\n`;
     summary += `${'-'.repeat(40)}\n`;
     summary += `Terminées      : ${doneTasks.length}\n`;
-    if (activeTasks.length > 0)      summary += `En cours/pause : ${activeTasks.length}\n`;
+    if (activeTasks.length > 0) summary += `En cours/pause : ${activeTasks.length}\n`;
     if (carriedOverTasks.length > 0) summary += `Reportées      : ${carriedOverTasks.length}\n`;
-    if (templateTasks.length > 0)    summary += `Planifiées     : ${templateTasks.length}\n`;
+    if (templateTasks.length > 0) summary += `Planifiées     : ${templateTasks.length}\n`;
     summary += `Total          : ${tasks.length}\n`;
     if (totalMinutes > 0) summary += `Temps travaillé : ${this.formatMinutes(totalMinutes)}\n`;
 
@@ -428,16 +434,16 @@ ${JSON.stringify(input, null, 2)}`;
 
   /** Améliore les descriptions via Groq, Gemini ou Anthropic selon AI_PROVIDER. */
   private async improveWithAI(tasks: Task[]): Promise<Task[]> {
-    const provider  = (this.configService.get<string>('AI_PROVIDER') ?? 'anthropic').toLowerCase();
-    const apiKey    = this.configService.get<string>('AI_API_KEY');
-    const model     = this.configService.get<string>('AI_MODEL');
+    const provider = (this.configService.get<string>('AI_PROVIDER') ?? 'anthropic').toLowerCase();
+    const apiKey = this.configService.get<string>('AI_API_KEY');
+    const model = this.configService.get<string>('AI_MODEL');
     const maxTokens = parseInt(this.configService.get<string>('AI_MAX_TOKENS') ?? '4000', 10);
 
     if (!apiKey) throw new Error(`AI_API_KEY non configurée (provider: ${provider})`);
 
-    const input  = tasks.map(({ id, description, project, date, status }) => ({ id, description, project, date, status }));
+    const input = tasks.map(({ id, description, project, date, status }) => ({ id, description, project, date, status }));
     const prompt = this.buildPrompt(input);
-    let aiText   = '';
+    let aiText = '';
 
     // ── Groq (OpenAI-compatible) ────────────────────────────────────────────
     if (provider === 'groq') {
@@ -448,7 +454,7 @@ ${JSON.stringify(input, null, 2)}`;
       );
       aiText = res.data.choices?.[0]?.message?.content ?? '';
 
-    // ── Gemini ───────────────────────────────────────────────────────────────
+      // ── Gemini ───────────────────────────────────────────────────────────────
     } else if (provider === 'gemini') {
       const geminiModel = model ?? 'gemini-2.0-flash';
       const res = await axios.post(
@@ -458,7 +464,7 @@ ${JSON.stringify(input, null, 2)}`;
       );
       aiText = res.data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
 
-    // ── Anthropic (défaut) ───────────────────────────────────────────────────
+      // ── Anthropic (défaut) ───────────────────────────────────────────────────
     } else {
       const res = await axios.post(
         'https://api.anthropic.com/v1/messages',
@@ -475,11 +481,11 @@ ${JSON.stringify(input, null, 2)}`;
   // ── Exports ──────────────────────────────────────────────────────────────────
 
   exportDailySummary(date: string): string {
-    const tasks  = this.getAllTasks().filter(t => t.date === date);
-    const d      = new Date(date + 'T12:00:00');
+    const tasks = this.getAllTasks().filter(t => t.date === date);
+    const d = new Date(date + 'T12:00:00');
     const header = `RAPPORT JOURNALIER - TÂCHES DEVOPS\n`
-                 + `${d.toLocaleDateString('fr-FR', { weekday: 'long' }).toUpperCase()} ${d.toLocaleDateString('fr-FR')}\n`
-                 + `\n${'='.repeat(60)}\n\n`;
+      + `${d.toLocaleDateString('fr-FR', { weekday: 'long' }).toUpperCase()} ${d.toLocaleDateString('fr-FR')}\n`
+      + `\n${'='.repeat(60)}\n\n`;
     return header + this.buildReportText(tasks);
   }
 
@@ -489,10 +495,10 @@ ${JSON.stringify(input, null, 2)}`;
 
     try {
       const improved = await this.improveWithAI(tasks);
-      const d        = new Date(date + 'T12:00:00');
-      const header   = `RAPPORT JOURNALIER - TÂCHES DEVOPS (VERSION PROFESSIONNELLE)\n`
-                     + `${d.toLocaleDateString('fr-FR', { weekday: 'long' }).toUpperCase()} ${d.toLocaleDateString('fr-FR')}\n`
-                     + `\n${'='.repeat(60)}\n\n`;
+      const d = new Date(date + 'T12:00:00');
+      const header = `RAPPORT JOURNALIER - TÂCHES DEVOPS (VERSION PROFESSIONNELLE)\n`
+        + `${d.toLocaleDateString('fr-FR', { weekday: 'long' }).toUpperCase()} ${d.toLocaleDateString('fr-FR')}\n`
+        + `\n${'='.repeat(60)}\n\n`;
       return header + this.buildReportText(improved);
     } catch (error) {
       console.error('Erreur API Anthropic:', error);
@@ -501,24 +507,24 @@ ${JSON.stringify(input, null, 2)}`;
   }
 
   exportWeeklySummary(weekStart: string): string {
-    const from  = new Date(weekStart + 'T00:00:00');
+    const from = new Date(weekStart + 'T00:00:00');
     const tasks = this.getAllTasks().filter(t => new Date(t.date + 'T00:00:00') >= from);
     const header = `RAPPORT HEBDOMADAIRE - TÂCHES DEVOPS\n`
-                 + `Période : ${from.toLocaleDateString('fr-FR')} - ${new Date().toLocaleDateString('fr-FR')}\n`
-                 + `\n${'='.repeat(60)}\n\n`;
+      + `Période : ${from.toLocaleDateString('fr-FR')} - ${new Date().toLocaleDateString('fr-FR')}\n`
+      + `\n${'='.repeat(60)}\n\n`;
     return header + this.buildReportText(tasks);
   }
 
   async exportProfessionalReport(weekStart: string): Promise<string> {
-    const from  = new Date(weekStart + 'T00:00:00');
+    const from = new Date(weekStart + 'T00:00:00');
     const tasks = this.getAllTasks().filter(t => new Date(t.date + 'T00:00:00') >= from);
     if (tasks.length === 0) throw new Error('Aucune tâche à exporter pour cette semaine');
 
     try {
       const improved = await this.improveWithAI(tasks);
-      const header   = `RAPPORT HEBDOMADAIRE - TÂCHES DEVOPS (VERSION PROFESSIONNELLE)\n`
-                     + `Période : ${from.toLocaleDateString('fr-FR')} - ${new Date().toLocaleDateString('fr-FR')}\n`
-                     + `\n${'='.repeat(60)}\n\n`;
+      const header = `RAPPORT HEBDOMADAIRE - TÂCHES DEVOPS (VERSION PROFESSIONNELLE)\n`
+        + `Période : ${from.toLocaleDateString('fr-FR')} - ${new Date().toLocaleDateString('fr-FR')}\n`
+        + `\n${'='.repeat(60)}\n\n`;
       return header + this.buildReportText(improved);
     } catch (error) {
       console.error('Erreur API Anthropic:', error);
