@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
-import { CreateTaskDto, UpdateTaskDto } from '../dto/task.dto';
+import { CreateTaskDto, UpdateTaskDto, CreateSubtaskDto } from '../dto/task.dto';
 import { DatabaseService } from '../database/database.service';
 
 export interface PauseEntry {
@@ -22,6 +22,7 @@ export interface Task {
   workedMinutes: number;
   pauseHistory: PauseEntry[];
   parentTaskId?: number;
+  taskType: 'task' | 'subtask';
 }
 
 @Injectable()
@@ -41,6 +42,7 @@ export class TasksService {
       completed: row.completed === 1,
       status: row.status ?? 'done',
       pauseHistory: JSON.parse(row.pauseHistory || '[]'),
+      taskType: row.taskType ?? 'task',
     };
   }
 
@@ -125,7 +127,32 @@ export class TasksService {
   }
 
   deleteTask(id: number): void {
+    this.db.prepare("DELETE FROM tasks WHERE parentTaskId = ? AND taskType = 'subtask'").run(id);
     this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+  }
+
+  /** Crée une sous-tâche rattachée à une tâche parente (hérite du projet). */
+  createSubtask(parentId: number, dto: CreateSubtaskDto): Task {
+    const parent = this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(parentId) as any;
+    if (!parent) throw new NotFoundException('Tâche parente non trouvée');
+
+    const status = dto.status ?? 'template';
+    const today = this.todayDate();
+    let startTime: string | null = null;
+    let resumeTime: string | null = null;
+
+    if (status === 'active') {
+      startTime = this.nowTime();
+      resumeTime = startTime;
+    }
+
+    const result = this.db
+      .prepare(
+        'INSERT INTO tasks (date, project, description, startTime, status, completed, resumeTime, workedMinutes, pauseHistory, parentTaskId, taskType) VALUES (?, ?, ?, ?, ?, 0, ?, 0, ?, ?, ?)',
+      )
+      .run(today, parent.project, dto.description, startTime, status, resumeTime, '[]', parentId, 'subtask');
+
+    return this.rowToTask(this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(result.lastInsertRowid));
   }
 
   toggleComplete(id: number): Task {
@@ -283,10 +310,15 @@ export class TasksService {
 
   /** Construit le corps texte du rapport à partir d'une liste de tâches (tous statuts). */
   private buildReportText(tasks: Task[]): string {
-    const doneTasks = tasks.filter(t => t.status === 'done');
-    const activeTasks = tasks.filter(t => t.status === 'active' || t.status === 'paused');
-    const templateTasks = tasks.filter(t => t.status === 'template');
-    const carriedOverTasks = tasks.filter(t => t.status === 'carried_over');
+    const subtasksByParent = tasks
+      .filter(t => t.taskType === 'subtask')
+      .reduce((acc, t) => { (acc[t.parentTaskId!] = acc[t.parentTaskId!] ?? []).push(t); return acc; }, {} as Record<number, Task[]>);
+
+    const topLevel      = tasks.filter(t => t.taskType !== 'subtask');
+    const doneTasks        = topLevel.filter(t => t.status === 'done');
+    const activeTasks      = topLevel.filter(t => t.status === 'active' || t.status === 'paused');
+    const templateTasks    = topLevel.filter(t => t.status === 'template');
+    const carriedOverTasks = topLevel.filter(t => t.status === 'carried_over');
 
     let summary = '';
     let totalMinutes = 0;
@@ -323,6 +355,11 @@ export class TasksService {
               summary += `     ⏸ Pause ${p.pausedAt} → ▶ Reprise ${p.resumedAt ?? '(en cours)'}${durStr}\n`;
             });
           }
+          (subtasksByParent[task.id] ?? []).forEach(sub => {
+            const icon = sub.status === 'done' && sub.completed ? '  ✓' : sub.status === 'active' ? '  ▶' : sub.status === 'paused' ? '  ⏸' : '  ◷';
+            const subTime = sub.workedMinutes > 0 ? ` (${this.formatMinutes(sub.workedMinutes)})` : '';
+            summary += `${icon} ${sub.description}${subTime}\n`;
+          });
         });
 
         if (dayMinutes > 0) {

@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, HttpException, HttpStatus } from '@nestjs/common';
 import { TasksService } from '../services/tasks.service';
-import { CreateTaskDto, UpdateTaskDto, ExportWeeklyDto, ExportProfessionalDto, ExportDailyDto, RolloverDto } from '../dto/task.dto';
+import { CreateTaskDto, UpdateTaskDto, ExportWeeklyDto, ExportProfessionalDto, ExportDailyDto, RolloverDto, CreateSubtaskDto } from '../dto/task.dto';
 
 @Controller('api/tasks')
 export class TasksController {
@@ -83,6 +83,15 @@ export class TasksController {
       return this.tasksService.toggleComplete(Number(id));
     } catch (error) {
       throw new HttpException(error.message, HttpStatus.NOT_FOUND);
+    }
+  }
+
+  @Post(':id/subtasks')
+  createSubtask(@Param('id') id: string, @Body() dto: CreateSubtaskDto) {
+    try {
+      return this.tasksService.createSubtask(Number(id), dto);
+    } catch (error) {
+      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
     }
   }
 

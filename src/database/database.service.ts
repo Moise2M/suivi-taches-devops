@@ -59,6 +59,9 @@ export class DatabaseService implements OnModuleInit {
     if (!cols.includes('parentTaskId')) {
       this.db.exec(`ALTER TABLE tasks ADD COLUMN parentTaskId INTEGER`);
     }
+    if (!cols.includes('taskType')) {
+      this.db.exec(`ALTER TABLE tasks ADD COLUMN taskType TEXT NOT NULL DEFAULT 'task'`);
+    }
   }
 
   getDb() {

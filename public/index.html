@@ -47,6 +47,49 @@
     // Formater des minutes brutes en Xh00
     const fmtMinutes = (m) => !m ? '0h00' : `${Math.floor(m/60)}h${(m%60).toString().padStart(2,'0')}`;
 
+    // ─── Sous-tâche (ligne compacte) ─────────────────────────────────────────
+    function SubtaskRow({ task, onStart, onPause, onResume, onStop, onDelete, onToggle }) {
+      const isTemplate = task.status === 'template';
+      const isActive   = task.status === 'active';
+      const isPaused   = task.status === 'paused';
+      const isDone     = task.status === 'done';
+      const elapsed    = isActive ? calcActiveElapsed(task.resumeTime, task.workedMinutes) : null;
+
+      const bg = isActive ? 'bg-amber-50 border-amber-200'
+               : isPaused ? 'bg-blue-50 border-blue-200'
+               : isDone   ? 'bg-emerald-50 border-emerald-200'
+               :             'bg-white border-slate-200';
+
+      return (
+        <div className={`flex items-center gap-2 py-1.5 px-2 rounded border text-sm ${bg}`}>
+          <span className="w-4 flex-shrink-0 text-center text-xs">
+            {isDone     && <button onClick={onToggle} className={task.completed ? 'text-emerald-500' : 'text-slate-300 hover:text-slate-500'}>{task.completed ? '✓' : '○'}</button>}
+            {isActive   && <span className="text-amber-500">▶</span>}
+            {isPaused   && <span className="text-blue-400">⏸</span>}
+            {isTemplate && <span className="text-slate-400">◷</span>}
+          </span>
+          <span className={`flex-1 text-xs text-slate-700 ${isDone && task.completed ? 'line-through opacity-50' : ''}`}>
+            {task.description}
+          </span>
+          {isActive  && <span className="text-xs text-amber-600 flex-shrink-0">{elapsed}</span>}
+          {isPaused  && task.workedMinutes > 0 && <span className="text-xs text-blue-500 flex-shrink-0">{fmtMinutes(task.workedMinutes)}</span>}
+          {isDone && task.workedMinutes > 0 && <span className="text-xs text-slate-400 flex-shrink-0">{fmtMinutes(task.workedMinutes)}</span>}
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {isTemplate && <button onClick={onStart}  className="px-1.5 py-0.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">▶</button>}
+            {isActive && <>
+              <button onClick={onPause} className="px-1.5 py-0.5 bg-blue-500 text-white text-xs rounded hover:bg-blue-600">⏸</button>
+              <button onClick={onStop}  className="px-1.5 py-0.5 bg-emerald-600 text-white text-xs rounded hover:bg-emerald-700">⏹</button>
+            </>}
+            {isPaused && <>
+              <button onClick={onResume} className="px-1.5 py-0.5 bg-amber-500 text-white text-xs rounded hover:bg-amber-600">▶</button>
+              <button onClick={onStop}   className="px-1.5 py-0.5 bg-emerald-600 text-white text-xs rounded hover:bg-emerald-700">⏹</button>
+            </>}
+            <button onClick={onDelete} className="text-red-400 hover:text-red-600 text-xs px-1">✕</button>
+          </div>
+        </div>
+      );
+    }
+
     // ─── Modal Projets ─────────────────────────────────────────────────────────
     function ProjectModal({ projects, onClose, onAdd, onDelete }) {
       const [name, setName] = useState('');
@@ -103,12 +146,21 @@
     }
 
     // ─── Carte de tâche ───────────────────────────────────────────────────────
-    function TaskCard({ task, allTasks, now, onEdit, onDelete, onStart, onPause, onResume, onStop, onToggle }) {
+    function TaskCard({ task, subtasks, allTasks, now, onEdit, onDelete, onStart, onPause, onResume, onStop, onToggle, onAddSubtask, onSubStart, onSubPause, onSubResume, onSubStop, onSubDelete, onSubToggle }) {
       const isTemplate    = task.status === 'template';
       const isActive      = task.status === 'active';
       const isPaused      = task.status === 'paused';
       const isDone        = task.status === 'done';
       const isCarriedOver = task.status === 'carried_over';
+      const subs          = subtasks || [];
+      const [showSubForm, setShowSubForm] = useState(false);
+      const [subDesc, setSubDesc]         = useState('');
+
+      const submitSub = async (status) => {
+        if (!subDesc.trim()) return;
+        await onAddSubtask(task.id, subDesc.trim(), status);
+        setSubDesc(''); setShowSubForm(false);
+      };
 
       const elapsed  = isActive ? calcActiveElapsed(task.resumeTime, task.workedMinutes) : null;
       const duration = isDone && task.startTime && task.endTime ? calcDuration(task.startTime, task.endTime) : null;
@@ -211,6 +263,51 @@
                   );
                 })}
               </div>
+            )}
+
+            {/* ── Sous-tâches ── */}
+            {(subs.length > 0 || showSubForm) && (
+              <div className="mt-2 space-y-1">
+                {subs.length > 0 && (
+                  <div className="flex items-center gap-2 text-xs text-slate-400 mb-1">
+                    <span>📋 Sous-tâches</span>
+                    <span className="font-medium text-slate-500">
+                      {subs.filter(s => s.status === 'done' && s.completed).length}/{subs.length} terminées
+                    </span>
+                  </div>
+                )}
+                {subs.map(sub => (
+                  <SubtaskRow key={sub.id} task={sub}
+                    onStart={() => onSubStart(sub.id)}
+                    onPause={() => onSubPause(sub.id)}
+                    onResume={() => onSubResume(sub.id)}
+                    onStop={() => onSubStop(sub.id)}
+                    onDelete={() => onSubDelete(sub.id)}
+                    onToggle={() => onSubToggle(sub.id)}
+                  />
+                ))}
+                {showSubForm && (
+                  <div className="flex gap-1 items-center">
+                    <input autoFocus value={subDesc} onChange={e => setSubDesc(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') submitSub('template'); if (e.key === 'Escape') { setShowSubForm(false); setSubDesc(''); }}}
+                      placeholder="Description de la sous-tâche..."
+                      className="flex-1 px-2 py-1 text-xs border border-slate-300 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-transparent"/>
+                    <button onClick={() => submitSub('template')} title="Planifier"
+                      className="px-2 py-1 bg-slate-500 text-white text-xs rounded hover:bg-slate-600">📅</button>
+                    <button onClick={() => submitSub('active')} title="Commencer maintenant"
+                      className="px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">▶</button>
+                    <button onClick={() => { setShowSubForm(false); setSubDesc(''); }}
+                      className="text-slate-400 hover:text-slate-600 text-xs px-1">✕</button>
+                  </div>
+                )}
+              </div>
+            )}
+            {/* Bouton + sous-tâche */}
+            {!isCarriedOver && !showSubForm && (
+              <button onClick={() => setShowSubForm(true)}
+                className="mt-1.5 text-xs text-slate-400 hover:text-blue-500 flex items-center gap-1 transition-colors">
+                + sous-tâche
+              </button>
             )}
           </div>
 
@@ -355,7 +452,14 @@
 
       const deleteTask = async (id) => {
         await fetch(`${API}/tasks/${id}`, { method: 'DELETE' });
-        setTasks(t => t.filter(x => x.id !== id));
+        setTasks(t => t.filter(x => x.id !== id && x.parentTaskId !== id));
+      };
+
+      const addSubtask = async (parentId, description, status) => {
+        try {
+          const sub = await apiPost(`${API}/tasks/${parentId}/subtasks`, { description, status });
+          setTasks(t => [...t, sub]);
+        } catch (e) { alert('Erreur : ' + e.message); }
       };
 
       const startTask = async (id) => {
@@ -454,9 +558,13 @@
         a.download = filename; a.click();
       };
 
-      // Groupement des tâches
-      const liveTasks  = tasks.filter(t => t.status === 'active' || t.status === 'paused');
-      const otherTasks = tasks.filter(t => t.status !== 'active' && t.status !== 'paused');
+      // Groupement des tâches (les sous-tâches sont gérées dans leur carte parente)
+      const subtasksByParent = tasks
+        .filter(t => t.taskType === 'subtask')
+        .reduce((acc, t) => { (acc[t.parentTaskId] = acc[t.parentTaskId] || []).push(t); return acc; }, {});
+      const topLevel   = tasks.filter(t => t.taskType !== 'subtask');
+      const liveTasks  = topLevel.filter(t => t.status === 'active' || t.status === 'paused');
+      const otherTasks = topLevel.filter(t => t.status !== 'active' && t.status !== 'paused');
       const byDate = otherTasks.reduce((acc, t) => { (acc[t.date] = acc[t.date]||[]).push(t); return acc; }, {});
       const dates  = Object.keys(byDate).sort().reverse();
 
@@ -633,7 +741,7 @@
                 </div>
                 <div className="p-4 space-y-2">
                   {liveTasks.map(task => (
-                    <TaskCard key={task.id} task={task} allTasks={tasks} now={now}
+                    <TaskCard key={task.id} task={task} subtasks={subtasksByParent[task.id] || []} allTasks={tasks} now={now}
                       onEdit={() => startEdit(task)}
                       onDelete={() => deleteTask(task.id)}
                       onStart={() => startTask(task.id)}
@@ -641,6 +749,9 @@
                       onResume={() => resumeTask(task.id)}
                       onStop={() => stopTask(task.id)}
                       onToggle={() => toggleTask(task.id)}
+                      onAddSubtask={addSubtask}
+                      onSubStart={startTask} onSubPause={pauseTask} onSubResume={resumeTask}
+                      onSubStop={stopTask} onSubDelete={deleteTask} onSubToggle={toggleTask}
                     />
                   ))}
                 </div>
@@ -664,7 +775,7 @@
                   </div>
                   <div className="p-4 space-y-2">
                     {dateTasks.map(task => (
-                      <TaskCard key={task.id} task={task} allTasks={tasks} now={now}
+                      <TaskCard key={task.id} task={task} subtasks={subtasksByParent[task.id] || []} allTasks={tasks} now={now}
                         onEdit={() => startEdit(task)}
                         onDelete={() => deleteTask(task.id)}
                         onStart={() => startTask(task.id)}
@@ -672,6 +783,9 @@
                         onResume={() => resumeTask(task.id)}
                         onStop={() => stopTask(task.id)}
                         onToggle={() => toggleTask(task.id)}
+                        onAddSubtask={addSubtask}
+                        onSubStart={startTask} onSubPause={pauseTask} onSubResume={resumeTask}
+                        onSubStop={stopTask} onSubDelete={deleteTask} onSubToggle={toggleTask}
                       />
                     ))}
                   </div>

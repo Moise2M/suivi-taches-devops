@@ -79,3 +79,13 @@ export class RolloverDto {
   @IsNotEmpty()
   date: string;
 }
+
+export class CreateSubtaskDto {
+  @IsString()
+  @IsNotEmpty()
+  description: string;
+
+  @IsIn(['template', 'active'])
+  @IsOptional()
+  status?: 'template' | 'active';
+}
