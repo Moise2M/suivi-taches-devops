@@ -233,15 +233,10 @@ export class TasksService {
       : 0;
     const totalWorked = (task.workedMinutes ?? 0) + sessionMinutes;
 
-    // Fermer la dernière pause ouverte si la tâche est stoppée en étant en pause
-    const history: PauseEntry[] = JSON.parse(task.pauseHistory || '[]');
-    const lastPause = history[history.length - 1];
-    if (lastPause && !lastPause.resumedAt) lastPause.resumedAt = now;
-
     // endTime = heure réelle de terminaison (jamais calculée, toujours le now)
     this.db
-      .prepare('UPDATE tasks SET endTime=?, workedMinutes=?, pauseHistory=?, status=?, completed=1 WHERE id=?')
-      .run(now, totalWorked, JSON.stringify(history), 'done', id);
+      .prepare('UPDATE tasks SET endTime=?, workedMinutes=?, status=?, completed=1 WHERE id=?')
+      .run(now, totalWorked, 'done', id);
 
     return this.rowToTask(this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(id));
   }
@@ -298,8 +293,8 @@ export class TasksService {
   private calculateDuration(start: string, end: string): string {
     const [sH, sM] = start.split(':').map(Number);
     const [eH, eM] = end.split(':').map(Number);
-    let diff = (eH * 60 + eM) - (sH * 60 + sM);
-    if (diff < 0) diff += 24 * 60; // passage minuit
+    const diff = (eH * 60 + eM) - (sH * 60 + sM);
+    if (diff < 0) return '0h00';
     return `${Math.floor(diff / 60)}h${(diff % 60).toString().padStart(2, '0')}`;
   }
 
@@ -346,8 +341,7 @@ export class TasksService {
           if (task.startTime && task.endTime) {
             const dur = this.calculateDuration(task.startTime, task.endTime);
             timeStr = ` [${task.startTime} - ${task.endTime}] (${dur})`;
-            // Priorité à workedMinutes (temps net hors pauses) ; fallback sur durée brute pour saisies manuelles
-            dayMinutes += task.workedMinutes > 0 ? task.workedMinutes : this.parseDurationToMinutes(dur);
+            dayMinutes += this.parseDurationToMinutes(dur);
           } else if (task.startTime) {
             timeStr = ` [${task.startTime}]`;
           }
