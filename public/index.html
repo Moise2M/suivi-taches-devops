@@ -362,10 +362,12 @@
       const [editId, setEditId]       = useState(null);
       const [editEndTime, setEditEndTime] = useState('');
       const [showProjectModal, setShowProjectModal] = useState(false);
-      const [isGenPro, setIsGenPro]           = useState(false);
-      const [isGenDailyPro, setIsGenDailyPro] = useState(false);
-      const [showDailyExport, setShowDailyExport] = useState(false);
-      const [exportDay, setExportDay]         = useState(new Date().toISOString().split('T')[0]);
+      const [isGenPro, setIsGenPro]               = useState(false);
+      const [isGenDailyPro, setIsGenDailyPro]     = useState(false);
+      const [showDailyExport, setShowDailyExport]   = useState(false);
+      const [showWeeklyExport, setShowWeeklyExport] = useState(false);
+      const [exportDay, setExportDay]             = useState(new Date().toISOString().split('T')[0]);
+      const [exportWeekDate, setExportWeekDate]   = useState(new Date().toISOString().split('T')[0]);
       const [now, setNow]                   = useState(new Date());
       const [rolloverNotice, setRolloverNotice] = useState(0);
 
@@ -528,28 +530,37 @@
         finally { setIsGenDailyPro(false); }
       };
 
+      const getWeekStart = (dateStr) => {
+        const d = new Date((dateStr || new Date().toISOString().split('T')[0]) + 'T12:00:00');
+        const day = d.getDay();
+        d.setDate(d.getDate() - day + (day === 0 ? -6 : 1));
+        return d.toISOString().split('T')[0];
+      };
+
+      const getWeekEnd = (dateStr) => {
+        const d = new Date(getWeekStart(dateStr) + 'T12:00:00');
+        d.setDate(d.getDate() + 6);
+        return d.toISOString().split('T')[0];
+      };
+
       const exportWeekly = async () => {
         try {
-          const weekStart = getWeekStart();
+          const weekStart = getWeekStart(exportWeekDate);
           const { content, filename } = await apiPost(`${API}/tasks/export/weekly`, { weekStart });
           download(content, filename);
-        } catch (e) { alert('Erreur export'); }
+          setShowWeeklyExport(false);
+        } catch (e) { alert('Erreur export hebdomadaire'); }
       };
 
       const exportPro = async () => {
         setIsGenPro(true);
         try {
-          const weekStart = getWeekStart();
+          const weekStart = getWeekStart(exportWeekDate);
           const { content, filename } = await apiPost(`${API}/tasks/export/professional`, { weekStart });
           download(content, filename);
-        } catch (e) { alert('Erreur export pro. Vérifiez ANTHROPIC_API_KEY.'); }
+          setShowWeeklyExport(false);
+        } catch (e) { alert('Erreur export Pro. Vérifiez la clé API dans .env.'); }
         finally { setIsGenPro(false); }
-      };
-
-      const getWeekStart = () => {
-        const d = new Date(); const day = d.getDay();
-        d.setDate(d.getDate() - day + (day === 0 ? -6 : 1));
-        return d.toISOString().split('T')[0];
       };
 
       const download = (content, filename) => {
@@ -600,12 +611,9 @@
                     className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${showDailyExport ? 'bg-sky-700 text-white' : 'bg-sky-600 text-white hover:bg-sky-700'}`}>
                     📄 Rapport journalier
                   </button>
-                  <button onClick={exportWeekly} className="px-3 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium">
+                  <button onClick={() => { setShowWeeklyExport(v => !v); setShowDailyExport(false); }}
+                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${showWeeklyExport ? 'bg-emerald-700 text-white' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}>
                     📅 Rapport hebdo
-                  </button>
-                  <button onClick={exportPro} disabled={isGenPro}
-                    className="px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 text-sm font-medium">
-                    {isGenPro ? '⏳ Génération...' : '✨ Rapport Pro (IA)'}
                   </button>
                 </div>
               </div>
@@ -630,6 +638,33 @@
                       {isGenDailyPro ? '⏳ Génération...' : '✨ Pro (IA)'}
                     </button>
                     <p className="self-center text-xs text-sky-600">Inclut : terminées + en cours + planifiées</p>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Panneau export hebdomadaire ── */}
+              {showWeeklyExport && (
+                <div className="mb-5 p-4 bg-emerald-50 border border-emerald-200 rounded-xl space-y-3">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className="text-sm font-semibold text-emerald-800">Choisir une date dans la semaine :</span>
+                    <input type="date" value={exportWeekDate} onChange={e => setExportWeekDate(e.target.value)}
+                      className="px-3 py-1.5 border border-emerald-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent"/>
+                    <span className="text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-1 rounded-lg">
+                      Semaine du {fmtDate(getWeekStart(exportWeekDate))} au {fmtDate(getWeekEnd(exportWeekDate))}
+                    </span>
+                    <button onClick={() => setShowWeeklyExport(false)}
+                      className="ml-auto text-emerald-400 hover:text-emerald-700 text-sm">✕ Fermer</button>
+                  </div>
+                  <div className="flex gap-2 flex-wrap">
+                    <button onClick={exportWeekly}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors">
+                      ⬇ Simple
+                    </button>
+                    <button onClick={exportPro} disabled={isGenPro}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 text-white text-sm font-semibold rounded-lg hover:bg-purple-700 disabled:opacity-50 transition-colors">
+                      {isGenPro ? '⏳ Génération...' : '✨ Pro (IA)'}
+                    </button>
+                    <p className="self-center text-xs text-emerald-600">Inclut : toutes les tâches de la semaine sélectionnée</p>
                   </div>
                 </div>
               )}
